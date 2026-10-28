@@ -23,6 +23,21 @@ Two VMs: **DC01** (Windows Server 2019/2022/2025, 2 NICs) and **WS-001** (Window
 | OUs | `Corp\Users\{IT,HR,Finance,Sales,Operations}`, `Corp\Computers`, `Corp\Groups` |
 | Users | 150 (30 per OU), `first.last`, random 16-char passwords, change at first logon |
 
+## VMware Workstation setup (do this first)
+
+> **Run every script inside the VMs, never on your host laptop.** Copy the scripts into each guest (drag-and-drop with VMware Tools, a shared folder, or `git clone` inside the VM). The scripts refuse to run on a physical machine or the wrong OS.
+
+1. **LAN Segment:** VM Settings > Network Adapter > *LAN Segments...* > Add `CORP-LAN`.
+2. **DC01** (Windows Server 2019/2022/2025): Network Adapter 1 = **NAT** (VMnet8); Add > Network Adapter 2 = **LAN Segment `CORP-LAN`**.
+3. **WS-001** (Windows 10/11 Pro or Enterprise): one Network Adapter = **LAN Segment `CORP-LAN`**.
+   (Host-only VMnet1 also works, but untick *Use local DHCP service* in Virtual Network Editor or VMware's DHCP will hand the client the wrong address.)
+4. In each VM, open **Windows PowerShell 5.1 as Administrator** (not pwsh 7), then:
+   ```powershell
+   Set-ExecutionPolicy -Scope Process Bypass -Force
+   Get-ChildItem *.ps1 | Unblock-File
+   ```
+5. On DC01 set a strong local Administrator password before step 1: `net user Administrator *`
+
 ## Run order
 
 | # | Script | Where | Notes |
@@ -51,6 +66,17 @@ Allow scripts first: `Set-ExecutionPolicy -Scope Process Bypass`.
 - Log on as a Sales user on Friday or after 20:00 → refused.
 - HR user → `cmd` blocked, Control Panel blocked; IT user → both allowed.
 - Plug a USB stick into WS-001 → no access.
+
+## Troubleshooting
+
+| Error | Cause / fix |
+|---|---|
+| `Install-WindowsFeature is not recognized` | You're on Windows 10/11 (probably the host). Run inside the **Server** VM. |
+| `No MSFT_NetIPInterface objects found ... 'Internal'` | NIC names differ from `Ethernet0`/`Ethernet1`. 01 now auto-detects; or pass `-ExternalAdapter`/`-InternalAdapter` with names from `Get-NetAdapter`. |
+| `Expected exactly 2 NICs` | Add the second (LAN Segment) adapter to DC01 in VMware. |
+| Promotion fails on Administrator password | `net user Administrator *` with a complex password, rerun 01. |
+| 05: client got a non-`192.168.10.x` address | Client NIC isn't on the same LAN Segment as DC01's Internal NIC, or VMware DHCP is on for that VMnet. |
+| `Add-Computer` / GPO cmdlets missing | You're in PowerShell 7. Use Windows PowerShell 5.1. |
 
 ## Lab vs production caveats
 

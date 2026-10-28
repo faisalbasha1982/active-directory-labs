@@ -23,12 +23,50 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# --- 1. Rename adapters so later scripts are unambiguous --------------------------------
-if (Get-NetAdapter -Name $ExternalAdapter -ErrorAction SilentlyContinue) {
-    Rename-NetAdapter -Name $ExternalAdapter -NewName 'External'
+# Guard: this script configures a Windows SERVER VM. Never run it on your physical laptop.
+$cs = Get-CimInstance Win32_ComputerSystem
+if ((Get-CimInstance Win32_OperatingSystem).ProductType -eq 1) {
+    throw "This is a Windows client OS ($env:COMPUTERNAME). Run this script INSIDE the Windows Server VM (DC01), not on your host laptop."
 }
-if (Get-NetAdapter -Name $InternalAdapter -ErrorAction SilentlyContinue) {
-    Rename-NetAdapter -Name $InternalAdapter -NewName 'Internal'
+if ($cs.Model -notmatch 'VMware|Virtual|KVM|QEMU') {
+    throw "$env:COMPUTERNAME does not look like a VM (Model: $($cs.Model)). This lab reconfigures NICs and AD; run it inside the VMware guest."
+}
+
+# --- 0. Pre-flight ---------------------------------------------------------------------
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')) {
+    throw 'Run this from an elevated (Run as administrator) Windows PowerShell window.'
+}
+if ($PSVersionTable.PSEdition -ne 'Desktop') {
+    throw 'Use Windows PowerShell 5.1 (powershell.exe), not PowerShell 7 (pwsh.exe).'
+}
+
+# --- 1. Rename adapters so later scripts are unambiguous --------------------------------
+# Skip if already done on a previous run
+$haveExt = Get-NetAdapter -Name 'External' -ErrorAction SilentlyContinue
+$haveInt = Get-NetAdapter -Name 'Internal' -ErrorAction SilentlyContinue
+if (-not ($haveExt -and $haveInt)) {
+    $ext = Get-NetAdapter -Name $ExternalAdapter -ErrorAction SilentlyContinue
+    $int = Get-NetAdapter -Name $InternalAdapter -ErrorAction SilentlyContinue
+
+    if (-not ($ext -and $int)) {
+        # Names didn't match (Server 2022/2025 often uses "Ethernet" / "Ethernet 2").
+        # Auto-detect: the NIC with a default gateway is External, the other is Internal.
+        $nics = @(Get-NetAdapter -Physical | Sort-Object ifIndex)
+        if ($nics.Count -ne 2) {
+            Get-NetAdapter | Format-Table Name, InterfaceDescription, Status, MacAddress
+            throw "Expected exactly 2 NICs, found $($nics.Count). Add a second network adapter to the VM in VMware (VM > Settings > Add > Network Adapter)."
+        }
+        $gwIdx = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue).ifIndex
+        $ext = $nics | Where-Object { $_.ifIndex -in $gwIdx } | Select-Object -First 1
+        if (-not $ext) {
+            Get-NetAdapter | Format-Table Name, InterfaceDescription, Status
+            throw "Can't tell which NIC is External (none has a default gateway). Rerun with -ExternalAdapter '<name>' -InternalAdapter '<name>' using the names above."
+        }
+        $int = $nics | Where-Object ifIndex -ne $ext.ifIndex
+        Write-Host "Auto-detected: External = '$($ext.Name)', Internal = '$($int.Name)'" -ForegroundColor Yellow
+    }
+    if (-not $haveExt) { Rename-NetAdapter -Name $ext.Name -NewName 'External' }
+    if (-not $haveInt) { Rename-NetAdapter -Name $int.Name -NewName 'Internal' }
 }
 
 # --- 2. Static IP on Internal (no gateway: the DC IS the gateway for the LAN) -----------
@@ -54,6 +92,12 @@ if ($env:COMPUTERNAME -ne $ServerName) {
 }
 
 # --- 4. Install AD DS + DNS and create the forest ---------------------------------------
+if ((Get-CimInstance Win32_ComputerSystem).DomainRole -ge 4) {
+    Write-Host "$env:COMPUTERNAME is already a domain controller - nothing to do. Continue with 02." -ForegroundColor Green
+    return
+}
+# Promotion fails if the built-in local Administrator has a blank/weak password:
+#   net user Administrator *     (set a complex one first, then rerun)
 Install-WindowsFeature AD-Domain-Services, DNS -IncludeManagementTools
 
 $dsrm = Read-Host -AsSecureString 'Enter DSRM (Directory Services Restore Mode) password'

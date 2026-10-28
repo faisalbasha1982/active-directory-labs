@@ -11,6 +11,15 @@
 param([string]$RootOU = 'Corp')
 
 $ErrorActionPreference = 'Stop'
+
+# Guard: this script configures a Windows SERVER VM. Never run it on your physical laptop.
+$cs = Get-CimInstance Win32_ComputerSystem
+if ((Get-CimInstance Win32_OperatingSystem).ProductType -eq 1) {
+    throw "This is a Windows client OS ($env:COMPUTERNAME). Run this script INSIDE the Windows Server VM (DC01), not on your host laptop."
+}
+if ($cs.Model -notmatch 'VMware|Virtual|KVM|QEMU') {
+    throw "$env:COMPUTERNAME does not look like a VM (Model: $($cs.Model)). This lab reconfigures NICs and AD; run it inside the VMware guest."
+}
 Import-Module ActiveDirectory, GroupPolicy
 
 $domain    = Get-ADDomain
