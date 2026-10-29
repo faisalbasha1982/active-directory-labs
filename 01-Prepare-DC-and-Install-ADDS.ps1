@@ -23,6 +23,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Must run elevated
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')) {
+    throw 'Not elevated. Close this window, right-click Windows PowerShell > Run as administrator, and run the script again.'
+}
+
 # Guard: this script configures a Windows SERVER VM. Never run it on your physical laptop.
 $cs = Get-CimInstance Win32_ComputerSystem
 if ((Get-CimInstance Win32_OperatingSystem).ProductType -eq 1) {
